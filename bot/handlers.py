@@ -175,21 +175,28 @@ def register_handlers(dp: Dispatcher):
                 raise e
         await callback.answer()
 
-    @dp.callback_query(lambda c: c.data == "content_done")
-    async def process_content_done(callback: types.CallbackQuery):
-        user_id = callback.from_user.id
+        @dp.callback_query(lambda c: c.data == "content_done")
+        async def process_content_done(callback: types.CallbackQuery):
+            print("DEBUG: Начало process_content_done")  # <-- добавить
+            user_id = callback.from_user.id
+            print(f"DEBUG: user_id = {user_id}")  # <-- добавить
 
-        if user_id not in user_selections:
-            user_selections[user_id] = {"sports": [], "content_types": []}
+            if user_id not in user_selections:
+                print("DEBUG: user_selections нет, создаю")  # <-- добавить
+                user_selections[user_id] = {"sports": [], "content_types": []}
 
-        selected_types = user_selections[user_id]["content_types"]
+            selected_types = user_selections[user_id]["content_types"]
+            print(f"DEBUG: selected_types = {selected_types}")  # <-- добавить
 
-        if not selected_types:
-            await callback.answer("❌ Выберите хотя бы один тип контента!", show_alert=True)
-            return
+            if not selected_types:
+                await callback.answer("❌ Выберите хотя бы один тип контента!", show_alert=True)
+                return
 
-        # Сохраняем настройки в БД
-        save_settings(user_id, user_selections[user_id]["sports"], user_selections[user_id]["content_types"])
+            # Сохраняем настройки в БД
+            print(
+                f"DEBUG: Сохраняю в БД: спорт={user_selections[user_id]['sports']}, типы={selected_types}")  # <-- добавить
+            save_settings(user_id, user_selections[user_id]["sports"], selected_types)
+            print("DEBUG: После save_settings")  # <-- добавить
 
         # Формируем сообщение с подтверждением
         sports_text = ", ".join([SPORTS[s] for s in user_selections[user_id]["sports"]])
