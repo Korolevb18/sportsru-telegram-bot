@@ -118,9 +118,15 @@ def register_handlers(dp: Dispatcher):
         else:
             user_selections[user_id]["sports"].append(sport_key)
 
-        await callback.message.edit_reply_markup(
-            reply_markup=get_sports_keyboard(user_selections[user_id]["sports"])
-        )
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=get_sports_keyboard(user_selections[user_id]["sports"])
+            )
+        except Exception as e:
+            if "message is not modified" in str(e):
+                await callback.answer()
+            else:
+                raise e
         await callback.answer()
 
     @dp.callback_query(lambda c: c.data == "sport_done")
@@ -158,9 +164,15 @@ def register_handlers(dp: Dispatcher):
         else:
             user_selections[user_id]["content_types"].append(content_key)
 
-        await callback.message.edit_reply_markup(
-            reply_markup=get_content_keyboard(user_selections[user_id]["content_types"])
-        )
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=get_content_keyboard(user_selections[user_id]["content_types"])
+            )
+        except Exception as e:
+            if "message is not modified" in str(e):
+                await callback.answer()
+            else:
+                raise e
         await callback.answer()
 
     @dp.callback_query(lambda c: c.data == "content_done")
