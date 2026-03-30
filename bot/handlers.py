@@ -27,9 +27,8 @@ CONTENT_TYPES = {
     "blogs": "✍️ Блоги"
 }
 
-# Временное хранилище для выбора пользователя (в реальном проекте лучше использовать FSM)
+# Временное хранилище для выбора пользователя
 user_selections = {}
-
 
 def get_sports_keyboard(selected_sports=None):
     """Создаёт клавиатуру с выбором видов спорта"""
@@ -39,27 +38,19 @@ def get_sports_keyboard(selected_sports=None):
     keyboard = []
     row = []
     for i, (key, name) in enumerate(SPORTS.items(), 1):
-        # Если спорт уже выбран, добавляем галочку
         display_name = f"✅ {name}" if key in selected_sports else name
         row.append(InlineKeyboardButton(text=display_name, callback_data=f"sport_{key}"))
-
-        # Каждые 2 кнопки — новая строка
         if i % 2 == 0:
             keyboard.append(row)
             row = []
-
-    # Добавляем последнюю строку, если осталась
     if row:
         keyboard.append(row)
 
-    # Добавляем кнопки управления
     keyboard.append([
         InlineKeyboardButton(text="✅ Готово", callback_data="sport_done"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
     ])
-
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
 
 def get_content_keyboard(selected_types=None):
     """Создаёт клавиатуру с выбором типов контента"""
@@ -75,27 +66,19 @@ def get_content_keyboard(selected_types=None):
         InlineKeyboardButton(text="✅ Готово", callback_data="content_done"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
     ])
-
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
 
 def register_handlers(dp: Dispatcher):
     """Регистрирует все обработчики"""
 
     @dp.message(Command("settings"))
     async def cmd_settings(message: types.Message):
-        """Настройка подписок"""
         user_id = message.from_user.id
-
-        # Загружаем текущие настройки
         sports, content_types = load_settings(user_id)
-
-        # Сохраняем в временное хранилище
         user_selections[user_id] = {
             "sports": sports if sports != ["*"] else [],
             "content_types": content_types if content_types != ["*"] else []
         }
-
         await message.answer(
             "🎯 **Настройка подписок**\n\n"
             "Выберите виды спорта, которые вас интересуют:\n"
@@ -107,17 +90,13 @@ def register_handlers(dp: Dispatcher):
     @dp.callback_query(lambda c: c.data.startswith("sport_"))
     async def process_sport_selection(callback: types.CallbackQuery):
         user_id = callback.from_user.id
-
         if user_id not in user_selections:
             user_selections[user_id] = {"sports": [], "content_types": []}
-
         sport_key = callback.data.replace("sport_", "")
-
         if sport_key in user_selections[user_id]["sports"]:
             user_selections[user_id]["sports"].remove(sport_key)
         else:
             user_selections[user_id]["sports"].append(sport_key)
-
         try:
             await callback.message.edit_reply_markup(
                 reply_markup=get_sports_keyboard(user_selections[user_id]["sports"])
@@ -132,16 +111,12 @@ def register_handlers(dp: Dispatcher):
     @dp.callback_query(lambda c: c.data == "sport_done")
     async def process_sport_done(callback: types.CallbackQuery):
         user_id = callback.from_user.id
-
         if user_id not in user_selections:
             user_selections[user_id] = {"sports": [], "content_types": []}
-
         selected_sports = user_selections[user_id]["sports"]
-
         if not selected_sports:
             await callback.answer("❌ Выберите хотя бы один вид спорта!", show_alert=True)
             return
-
         await callback.message.edit_text(
             "📝 **Выберите типы контента:**\n\n"
             "Что вы хотите получать?",
@@ -153,17 +128,13 @@ def register_handlers(dp: Dispatcher):
     @dp.callback_query(lambda c: c.data.startswith("content_"))
     async def process_content_selection(callback: types.CallbackQuery):
         user_id = callback.from_user.id
-
         if user_id not in user_selections:
             user_selections[user_id] = {"sports": [], "content_types": []}
-
         content_key = callback.data.replace("content_", "")
-
         if content_key in user_selections[user_id]["content_types"]:
             user_selections[user_id]["content_types"].remove(content_key)
         else:
             user_selections[user_id]["content_types"].append(content_key)
-
         try:
             await callback.message.edit_reply_markup(
                 reply_markup=get_content_keyboard(user_selections[user_id]["content_types"])
@@ -175,32 +146,30 @@ def register_handlers(dp: Dispatcher):
                 raise e
         await callback.answer()
 
-        @dp.callback_query(lambda c: c.data == "content_done")
-        async def process_content_done(callback: types.CallbackQuery):
-            print("DEBUG: Начало process_content_done")  # <-- добавить
-            user_id = callback.from_user.id
-            print(f"DEBUG: user_id = {user_id}")  # <-- добавить
+    @dp.callback_query(lambda c: c.data == "content_done")
+    async def process_content_done(callback: types.CallbackQuery):
+        print("DEBUG: process_content_done ВЫЗВАНА")
+        user_id = callback.from_user.id
+        print(f"DEBUG: user_id = {user_id}")
 
-            if user_id not in user_selections:
-                print("DEBUG: user_selections нет, создаю")  # <-- добавить
-                user_selections[user_id] = {"sports": [], "content_types": []}
+        if user_id not in user_selections:
+            print("DEBUG: user_selections нет, создаю")
+            user_selections[user_id] = {"sports": [], "content_types": []}
 
-            selected_types = user_selections[user_id]["content_types"]
-            print(f"DEBUG: selected_types = {selected_types}")  # <-- добавить
+        selected_types = user_selections[user_id]["content_types"]
+        print(f"DEBUG: selected_types = {selected_types}")
 
-            if not selected_types:
-                await callback.answer("❌ Выберите хотя бы один тип контента!", show_alert=True)
-                return
+        if not selected_types:
+            await callback.answer("❌ Выберите хотя бы один тип контента!", show_alert=True)
+            return
 
-            # Сохраняем настройки в БД
-            print(
-                f"DEBUG: Сохраняю в БД: спорт={user_selections[user_id]['sports']}, типы={selected_types}")  # <-- добавить
-            save_settings(user_id, user_selections[user_id]["sports"], selected_types)
-            print("DEBUG: После save_settings")  # <-- добавить
+        print(f"DEBUG: Сохраняю в БД: спорт={user_selections[user_id]['sports']}, типы={selected_types}")
+        save_settings(user_id, user_selections[user_id]["sports"], selected_types)
+        print("DEBUG: После save_settings")
 
         # Формируем сообщение с подтверждением
         sports_text = ", ".join([SPORTS[s] for s in user_selections[user_id]["sports"]])
-        types_text = ", ".join([CONTENT_TYPES[t] for t in user_selections[user_id]["content_types"]])
+        types_text = ", ".join([CONTENT_TYPES[t] for t in selected_types])
 
         await callback.message.edit_text(
             f"✅ **Настройки сохранены!**\n\n"
@@ -218,14 +187,11 @@ def register_handlers(dp: Dispatcher):
     @dp.callback_query(lambda c: c.data == "cancel")
     async def process_cancel(callback: types.CallbackQuery):
         user_id = callback.from_user.id
-
         await callback.message.edit_text(
             "❌ **Настройка отменена.**\n\n"
             "Вы можете начать заново с помощью команды /settings",
             parse_mode="Markdown"
         )
         await callback.answer()
-
-        # Очищаем временные данные
         if user_id in user_selections:
             del user_selections[user_id]
