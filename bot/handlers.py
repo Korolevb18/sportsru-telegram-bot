@@ -6,181 +6,141 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 from db.database import save_settings, load_settings
+from parser.extractor import extract_article_data
+from bot.sender import send_message
 
 # Список всех видов спорта
-SPORTS = {
-    "football": "⚽ Футбол",
-    "hockey": "🏒 Хоккей",
-    "basketball": "🏀 Баскетбол",
-    "tennis": "🎾 Теннис",
-    "biathlon": "🎯 Биатлон",
-    "figure_skating": "⛸ Фигурное катание",
-    "boxing_mma": "🥊 Бокс/MMA",
-    "autosport": "🏎 Автоспорт",
-    "other": "📰 Прочее"
-}
+SPORTS = [
+    ("football", "⚽ Футбол"),
+    ("hockey", "🏒 Хоккей"),
+    ("basketball", "🏀 Баскетбол"),
+    ("tennis", "🎾 Теннис"),
+    ("biathlon", "🎯 Биатлон"),
+    ("figure_skating", "⛸ Фигурное катание"),
+    ("boxing_mma", "🥊 Бокс/MMA"),
+    ("autosport", "🏎 Автоспорт"),
+    ("other", "📰 Прочее"),
+]
 
-# Список типов контента
-CONTENT_TYPES = {
-    "news": "📰 Новости",
-    "longreads": "📖 Материалы",
-    "blogs": "✍️ Блоги"
-}
-
-# Временное хранилище для выбора пользователя
-user_selections = {}
-
-def get_sports_keyboard(selected_sports=None):
-    """Создаёт клавиатуру с выбором видов спорта"""
-    if selected_sports is None:
-        selected_sports = []
-
-    keyboard = []
-    row = []
-    for i, (key, name) in enumerate(SPORTS.items(), 1):
-        display_name = f"✅ {name}" if key in selected_sports else name
-        row.append(InlineKeyboardButton(text=display_name, callback_data=f"sport_{key}"))
-        if i % 2 == 0:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-
-    keyboard.append([
-        InlineKeyboardButton(text="✅ Готово", callback_data="sport_done"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-def get_content_keyboard(selected_types=None):
-    """Создаёт клавиатуру с выбором типов контента"""
-    if selected_types is None:
-        selected_types = []
-
-    keyboard = []
-    for key, name in CONTENT_TYPES.items():
-        display_name = f"✅ {name}" if key in selected_types else name
-        keyboard.append([InlineKeyboardButton(text=display_name, callback_data=f"content_{key}")])
-
-    keyboard.append([
-        InlineKeyboardButton(text="✅ Готово", callback_data="content_done"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+CONTENT_TYPES = [
+    ("news", "📰 Новости"),
+    ("longreads", "📖 Материалы"),
+    ("blogs", "✍️ Блоги"),
+    ("top_publications", "⭐ Топ-публикации"),
+    ("fresh_publications", "🆕 Свежие публикации")
+]
 
 def register_handlers(dp: Dispatcher):
-    """Регистрирует все обработчики"""
+    user_selections = {}
 
     @dp.message(Command("settings"))
     async def cmd_settings(message: types.Message):
         user_id = message.from_user.id
-        sports, content_types = load_settings(user_id)
+        saved_sports, saved_types = load_settings(user_id)
         user_selections[user_id] = {
-            "sports": sports if sports != ["*"] else [],
-            "content_types": content_types if content_types != ["*"] else []
+            "sports": saved_sports if saved_sports != ["*"] else [],
+            "content_types": saved_types if saved_types != ["*"] else []
         }
+        
+        keyboard = []
+        for key, name in SPORTS:
+            display_name = f"✅ {name}" if key in user_selections[user_id]["sports"] else name
+            keyboard.append([InlineKeyboardButton(text=display_name, callback_data=f"sport_{key}")])
+        keyboard.append([InlineKeyboardButton(text="✅ Готово", callback_data="sport_done")])
+        
         await message.answer(
-            "🎯 **Настройка подписок**\n\n"
-            "Выберите виды спорта, которые вас интересуют:\n"
-            "(можно выбрать несколько)",
-            reply_markup=get_sports_keyboard(user_selections[user_id]["sports"]),
-            parse_mode="Markdown"
+            "🎯 Выберите виды спорта (можно несколько):",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
         )
 
-    @dp.callback_query(lambda c: c.data.startswith("sport_"))
-    async def process_sport_selection(callback: types.CallbackQuery):
+    @dp.callback_query(lambda c: c.data.startswith("sport_") and c.data != "sport_done")
+    async def select_sport(callback: types.CallbackQuery):
         user_id = callback.from_user.id
+        sport_key = callback.data.replace("sport_", "")
+        
         if user_id not in user_selections:
             user_selections[user_id] = {"sports": [], "content_types": []}
-        sport_key = callback.data.replace("sport_", "")
+        
         if sport_key in user_selections[user_id]["sports"]:
             user_selections[user_id]["sports"].remove(sport_key)
         else:
             user_selections[user_id]["sports"].append(sport_key)
-        try:
-            await callback.message.edit_reply_markup(
-                reply_markup=get_sports_keyboard(user_selections[user_id]["sports"])
-            )
-        except Exception as e:
-            if "message is not modified" in str(e):
-                await callback.answer()
-            else:
-                raise e
+        
+        keyboard = []
+        for key, name in SPORTS:
+            display_name = f"✅ {name}" if key in user_selections[user_id]["sports"] else name
+            keyboard.append([InlineKeyboardButton(text=display_name, callback_data=f"sport_{key}")])
+        keyboard.append([InlineKeyboardButton(text="✅ Готово", callback_data="sport_done")])
+        
+        await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
         await callback.answer()
 
     @dp.callback_query(lambda c: c.data == "sport_done")
-    async def process_sport_done(callback: types.CallbackQuery):
+    async def sport_done(callback: types.CallbackQuery):
         user_id = callback.from_user.id
-        if user_id not in user_selections:
-            user_selections[user_id] = {"sports": [], "content_types": []}
-        selected_sports = user_selections[user_id]["sports"]
+        selected_sports = user_selections.get(user_id, {}).get("sports", [])
+        
         if not selected_sports:
             await callback.answer("❌ Выберите хотя бы один вид спорта!", show_alert=True)
             return
+        
+        keyboard = []
+        for key, name in CONTENT_TYPES:
+            display_name = f"✅ {name}" if key in user_selections[user_id]["content_types"] else name
+            keyboard.append([InlineKeyboardButton(text=display_name, callback_data=f"content_{key}")])
+        keyboard.append([InlineKeyboardButton(text="✅ Готово", callback_data="content_done")])
+        
         await callback.message.edit_text(
-            "📝 **Выберите типы контента:**\n\n"
-            "Что вы хотите получать?",
-            reply_markup=get_content_keyboard(user_selections[user_id]["content_types"]),
-            parse_mode="Markdown"
+            "📝 Выберите типы контента (можно несколько):",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
         )
         await callback.answer()
 
-    @dp.callback_query(lambda c: c.data.startswith("content_"))
-    async def process_content_selection(callback: types.CallbackQuery):
+    @dp.callback_query(lambda c: c.data.startswith("content_") and c.data != "content_done")
+    async def select_content(callback: types.CallbackQuery):
         user_id = callback.from_user.id
+        content_key = callback.data.replace("content_", "")
+        
         if user_id not in user_selections:
             user_selections[user_id] = {"sports": [], "content_types": []}
-        content_key = callback.data.replace("content_", "")
+        
         if content_key in user_selections[user_id]["content_types"]:
             user_selections[user_id]["content_types"].remove(content_key)
         else:
             user_selections[user_id]["content_types"].append(content_key)
-        try:
-            await callback.message.edit_reply_markup(
-                reply_markup=get_content_keyboard(user_selections[user_id]["content_types"])
-            )
-        except Exception as e:
-            if "message is not modified" in str(e):
-                await callback.answer()
-            else:
-                raise e
+        
+        keyboard = []
+        for key, name in CONTENT_TYPES:
+            display_name = f"✅ {name}" if key in user_selections[user_id]["content_types"] else name
+            keyboard.append([InlineKeyboardButton(text=display_name, callback_data=f"content_{key}")])
+        keyboard.append([InlineKeyboardButton(text="✅ Готово", callback_data="content_done")])
+        
+        await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
         await callback.answer()
 
     @dp.callback_query(lambda c: c.data == "content_done")
-    async def process_content_done(callback: types.CallbackQuery):
-        print("DEBUG: process_content_done ВЫЗВАНА")
+    async def content_done(callback: types.CallbackQuery):
         user_id = callback.from_user.id
-        print(f"DEBUG: user_id = {user_id}")
-
-        if user_id not in user_selections:
-            print("DEBUG: user_selections нет, создаю")
-            user_selections[user_id] = {"sports": [], "content_types": []}
-
-        selected_types = user_selections[user_id]["content_types"]
-        print(f"DEBUG: selected_types = {selected_types}")
-
+        selected_sports = user_selections.get(user_id, {}).get("sports", [])
+        selected_types = user_selections.get(user_id, {}).get("content_types", [])
+        
         if not selected_types:
             await callback.answer("❌ Выберите хотя бы один тип контента!", show_alert=True)
             return
-
-        print(f"DEBUG: Сохраняю в БД: спорт={user_selections[user_id]['sports']}, типы={selected_types}")
-        save_settings(user_id, user_selections[user_id]["sports"], selected_types)
-        print("DEBUG: После save_settings")
-
-        # Формируем сообщение с подтверждением
-        sports_text = ", ".join([SPORTS[s] for s in user_selections[user_id]["sports"]])
-        types_text = ", ".join([CONTENT_TYPES[t] for t in selected_types])
-
+        
+        save_settings(user_id, selected_sports, selected_types)
+        
+        sport_names = [next((name for key, name in SPORTS if key == s), s) for s in selected_sports]
+        type_names = [next((name for key, name in CONTENT_TYPES if key == t), t) for t in selected_types]
+        
         await callback.message.edit_text(
             f"✅ **Настройки сохранены!**\n\n"
-            f"**Виды спорта:** {sports_text}\n"
-            f"**Типы контента:** {types_text}\n\n"
-            f"Новости будут приходить каждые 30 минут.",
-            parse_mode="Markdown"
+            f"**Виды спорта:** {', '.join(sport_names)}\n"
+            f"**Типы контента:** {', '.join(type_names)}\n\n"
+            f"Новости будут приходить каждые 30 минут."
         )
         await callback.answer()
-
-        # Очищаем временные данные
+        
         if user_id in user_selections:
             del user_selections[user_id]
 
@@ -189,9 +149,36 @@ def register_handlers(dp: Dispatcher):
         user_id = callback.from_user.id
         await callback.message.edit_text(
             "❌ **Настройка отменена.**\n\n"
-            "Вы можете начать заново с помощью команды /settings",
-            parse_mode="Markdown"
+            "Вы можете начать заново с помощью команды /settings"
         )
         await callback.answer()
         if user_id in user_selections:
             del user_selections[user_id]
+
+    @dp.callback_query(lambda c: c.data.startswith("full_"))
+    async def full_article_callback(callback: types.CallbackQuery):
+        """Обработчик кнопки 'Читать полностью' – отправляем обычный текст без Markdown"""
+        url = callback.data.replace("full_", "")
+        print(f"DEBUG: Нажата кнопка с URL: {url}")
+        
+        article = await extract_article_data(url)
+        if not article:
+            await callback.answer("❌ Не удалось загрузить полный текст", show_alert=True)
+            return
+        
+        # Формируем сообщение без Markdown
+        full_text = f"{article['title']}\n\n{article['full_text']}\n\nЧитать на Sports.ru: {article['url']}"
+        
+        # Обрезаем, если длиннее 3500 символов
+        if len(full_text) > 3500:
+            full_text = full_text[:3450] + "\n\n...(текст обрезан)\n\nЧитать на Sports.ru: " + article['url']
+        
+        try:
+            success = await send_message(callback.from_user.id, full_text, parse_mode=None)
+            if success:
+                await callback.answer("📖 Полный текст отправлен!")
+            else:
+                await callback.answer("❌ Ошибка отправки", show_alert=True)
+        except Exception as e:
+            print(f"Ошибка при отправке полного текста: {e}")
+            await callback.answer("❌ Ошибка", show_alert=True)

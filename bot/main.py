@@ -72,6 +72,8 @@ async def main():
     print("Бот запущен...")
     print(f"Разрешённые пользователи: {ALLOWED_USERS}")
     await dp.start_polling(bot)
+    
+print("===== ТЕСТ: БОТ ЗАПУСКАЕТСЯ =====")
 
 if __name__ == "__main__":
     asyncio.run(main())
