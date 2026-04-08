@@ -4,12 +4,16 @@ from aiogram.filters import Command
 from aiogram.types import Message
 import sys
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
 sys.path.append(str(Path(__file__).parent.parent))
 from db.database import init_db, add_user
 from handlers import register_handlers  # <-- вот так
 
-BOT_TOKEN = "8608448787:AAEVb5cT2icc5oUvTY6uj_VYM3fkKvNzKGg"
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = Bot(token=BOT_TOKEN)
 
 # Загружаем список разрешённых пользователей
 ALLOWED_USERS = set()

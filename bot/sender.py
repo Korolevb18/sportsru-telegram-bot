@@ -1,8 +1,11 @@
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import asyncio
+import os
+from dotenv import load_dotenv
 
-BOT_TOKEN = "8608448787:AAEVb5cT2icc5oUvTY6uj_VYM3fkKvNzKGg"
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=BOT_TOKEN)
 
 async def send_message(user_id: int, text: str, parse_mode: str = None, reply_markup=None):
