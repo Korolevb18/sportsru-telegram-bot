@@ -1,20 +1,67 @@
 import aiohttp
 from bs4 import BeautifulSoup
 import re
+import asyncio
 from datetime import datetime, timedelta
+import logging
 
-async def fetch_html(url: str) -> str | None:
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={'User-Agent': 'Mozilla/5.0'}) as response:
+logger = logging.getLogger(__name__)
+
+# Кэш HTML-страниц (на один запуск)
+_html_cache = {}
+
+# Глобальная сессия aiohttp для переиспользования
+_session = None
+
+async def get_session():
+    global _session
+    if _session is None or _session.closed:
+        _session = aiohttp.ClientSession(headers={'User-Agent': 'Mozilla/5.0'})
+    return _session
+
+async def close_session():
+    global _session
+    if _session and not _session.closed:
+        await _session.close()
+
+async def fetch_html(url: str, use_cache: bool = True, max_retries: int = 2) -> str | None:
+    """
+    Загружает HTML с повторными попытками при временных ошибках (500, 502, 503, 504 и т.п.).
+    """
+    if use_cache and url in _html_cache:
+        logger.debug(f"Использован кэш для {url}")
+        return _html_cache[url]
+
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            session = await get_session()
+            async with session.get(url) as response:
                 if response.status == 200:
-                    return await response.text()
+                    html = await response.text()
+                    if use_cache:
+                        _html_cache[url] = html
+                    return html
+                elif response.status in (500, 502, 503, 504):
+                    # временная ошибка сервера – можно повторить
+                    last_error = f"статус {response.status}"
+                    logger.warning(f"Попытка {attempt+1}/{max_retries+1} для {url}: {last_error}")
                 else:
-                    print(f"Ошибка загрузки {url}: статус {response.status}")
+                    logger.error(f"Ошибка загрузки {url}: статус {response.status}")
                     return None
-    except Exception as e:
-        print(f"Ошибка при запросе {url}: {e}")
-        return None
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"Ошибка при запросе {url}: {e}")
+            # при сетевых ошибках тоже пробуем повторить
+        if attempt < max_retries:
+            await asyncio.sleep(2.0)  # пауза перед повтором
+
+    logger.error(f"Не удалось загрузить {url} после {max_retries+1} попыток: {last_error}")
+    return None
+
+def clear_html_cache():
+    global _html_cache
+    _html_cache.clear()
 
 def normalize_url(url: str) -> str:
     url = url.split('#')[0]
@@ -33,26 +80,25 @@ def detect_sport_from_url(url: str) -> str:
     return 'other'
 
 def detect_content_type(url: str) -> str:
-    if '/blogs/' in url or '/tribuna/blogs/' in url:
+    if '/blogs/' in url or '/tribuna/blogs/' in url or '/post/' in url:
         return 'blogs'
     if '/news/' in url:
         return 'news'
     return 'news'
 
+def is_competition_url(url: str) -> bool:
+    patterns = ['/picker/', '/special/', 'm.sports.ru/picker', 'sports.ru/special', 'specials.sports.ru']
+    url_lower = url.lower()
+    return any(p in url_lower for p in patterns)
+
 async def fetch_news_links():
-    """
-    Парсит https://www.sports.ru/news/top/
-    Возвращает список (url, published_at) для ВСЕХ новостей из сегодняшнего блока.
-    Фильтрация по времени и дедупликация выполняются позже через sent_items.
-    """
     url = 'https://www.sports.ru/news/top/'
     html = await fetch_html(url)
     if not html:
         return []
     soup = BeautifulSoup(html, 'lxml')
-    now_msk = datetime.utcnow() + timedelta(hours=3)  # текущее время по Москве
+    now_msk = datetime.utcnow() + timedelta(hours=3)
 
-    # Формируем сегодняшнюю дату как на сайте: "6 апреля"
     months = {
         1: 'января', 2: 'февраля', 3: 'марта', 4: 'апреля',
         5: 'мая', 6: 'июня', 7: 'июля', 8: 'августа',
@@ -60,26 +106,21 @@ async def fetch_news_links():
     }
     today_str = f"{now_msk.day} {months[now_msk.month]}"
 
-    # Находим все блоки short-news
     blocks = soup.find_all('div', class_='short-news')
     today_block = None
-
-    # Ищем блок с сегодняшней датой (учитываем возможный пробел в конце)
     for block in blocks:
         b_tag = block.find('b')
         if b_tag:
             date_text = b_tag.get_text(strip=True)
-            # Сравниваем по началу строки (на случай пробелов)
             if date_text.startswith(today_str):
                 today_block = block
                 break
 
     if not today_block:
-        print("Не найден блок с сегодняшними новостями")
+        logger.warning("Не найден блок с сегодняшними новостями")
         return []
 
     items = []
-    # Парсим все новости внутри сегодняшнего блока
     for p in today_block.find_all('p'):
         time_span = p.find('span', class_='time')
         if not time_span:
@@ -94,9 +135,7 @@ async def fetch_news_links():
         except:
             continue
 
-        # Формируем дату публикации по Москве
         pub_date_msk = datetime(now_msk.year, now_msk.month, now_msk.day, hour, minute)
-        # Если время больше текущего – значит новость вчерашняя (пропускаем, хотя по логике этого блока не должно быть)
         if pub_date_msk > now_msk:
             continue
 
@@ -110,20 +149,14 @@ async def fetch_news_links():
             href = 'https://www.sports.ru' + href
         href = normalize_url(href)
 
-        # Сохраняем в БД время в UTC
+        if is_competition_url(href):
+            continue
+
         pub_date_utc = pub_date_msk - timedelta(hours=3)
         items.append((href, pub_date_utc.isoformat()))
-
     return items
 
-   
-
 async def fetch_blogs_links():
-    """
-    Парсит https://www.sports.ru/tribuna/
-    Возвращает список (url, published_at) для ВСЕХ постов блогов на первой странице.
-    published_at используется только для информации, фильтрация по времени не применяется.
-    """
     url = 'https://www.sports.ru/tribuna/'
     html = await fetch_html(url)
     if not html:
@@ -136,7 +169,6 @@ async def fetch_blogs_links():
         if not time_tag:
             continue
         datetime_attr = time_tag.get('datetime')
-        # Время публикации оставляем как есть (MSK), но для единообразия сохраняем в UTC
         pub_date_utc = None
         if datetime_attr:
             try:
@@ -145,7 +177,7 @@ async def fetch_blogs_links():
             except:
                 pass
         if not pub_date_utc:
-            pub_date_utc = datetime.utcnow()  # fallback
+            pub_date_utc = datetime.utcnow()
 
         title_link = li.find('a', class_='h1')
         if not title_link:
@@ -156,15 +188,14 @@ async def fetch_blogs_links():
         if href.startswith('/'):
             href = 'https://www.sports.ru' + href
         href = normalize_url(href)
+
+        if is_competition_url(href):
+            continue
+
         items.append((href, pub_date_utc.isoformat()))
     return items
-    
+
 async def fetch_mainpage_banners():
-    """
-    Парсит главную страницу https://www.sports.ru/
-    Возвращает список (url, published_at) для трёх баннеров (supertop-1,2,3).
-    Время публикации не указано, поэтому используем текущее время как published_at.
-    """
     url = 'https://www.sports.ru/'
     html = await fetch_html(url)
     if not html:
@@ -172,9 +203,8 @@ async def fetch_mainpage_banners():
     soup = BeautifulSoup(html, 'lxml')
     items = []
     now_utc = datetime.utcnow()
-    
-    # Ищем все ссылки с data-analytics-category, начинающимся на "supertop-"
-    for i in range(1, 4):  # supertop-1, supertop-2, supertop-3
+
+    for i in range(1, 4):
         selector = f'a[data-analytics-category="supertop-{i}"]'
         link = soup.select_one(selector)
         if not link:
@@ -185,15 +215,14 @@ async def fetch_mainpage_banners():
         if href.startswith('/'):
             href = 'https://www.sports.ru' + href
         href = normalize_url(href)
-        # Для баннеров время не указано, ставим текущее UTC
+
+        if is_competition_url(href):
+            continue
+
         items.append((href, now_utc.isoformat()))
     return items
 
 async def fetch_mainpage_fresh_links():
-    """
-    Парсит главную страницу https://www.sports.ru/
-    Возвращает список (url, published_at) для ВСЕХ материалов из .material-list__item-text.
-    """
     url = 'https://www.sports.ru/'
     html = await fetch_html(url)
     if not html:
@@ -222,5 +251,9 @@ async def fetch_mainpage_fresh_links():
         if href.startswith('/'):
             href = 'https://www.sports.ru' + href
         href = normalize_url(href)
+
+        if is_competition_url(href):
+            continue
+
         items.append((href, pub_date_utc.isoformat()))
     return items
